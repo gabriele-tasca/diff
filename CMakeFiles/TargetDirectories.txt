@@ -1,0 +1,3 @@
+/home/gaboloth/prj/code/diff/CMakeFiles/rebuild_cache.dir
+/home/gaboloth/prj/code/diff/CMakeFiles/edit_cache.dir
+/home/gaboloth/prj/code/diff/CMakeFiles/main.dir
