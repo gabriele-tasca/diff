@@ -27,7 +27,8 @@ int main(int argc, char** argv )
         return -1;
     }
 
-    cv::Mat_<cv::Vec4b> image = cv::imread( argv[1], cv::IMREAD_UNCHANGED );
+    cv::Mat image;
+    image = cv::imread( argv[1], cv::IMREAD_UNCHANGED );
     int ncols = image.cols;
     int nrows = image.rows;
     if ( !image.data )
@@ -36,11 +37,11 @@ int main(int argc, char** argv )
         return -1;
     }
 
-    cv::Mat_<cv::Vec2i> closest = cv::Mat(ncols, nrows, CV_32SC(2));
-    cv::Mat_<float> distances = cv::Mat(ncols, nrows, CV_32F);
-    
-    // cv::Mat snapshot = image.clone();
 
+    cv::Mat closest = cv::Mat(ncols, nrows, CV_32SC(2));
+    cv::Mat distances = cv::Mat(ncols, nrows, CV_32F);
+    
+    
 
     auto shuffled_rows = std::vector<int>(image.rows);
     auto shuffled_cols = std::vector<int>(image.cols);
@@ -77,21 +78,21 @@ int main(int argc, char** argv )
     ///////////////// 
 
 
-    auto update_pixel = [&](int y, int x, const int TEMPL[3][2], int k)
+    auto distmap_update_pixel = [&](int y, int x, const int TEMPL[3][2], int k)
     {
         int cy = y + TEMPL[k][0];
         int cx = x + TEMPL[k][1];
-        float newdist = DISTANCE(y,x,closest(cy,cx)[0],closest(cy,cx)[1]);
-        if (newdist < distances(y,x)  )
+        float newdist = DISTANCE(y,x,closest.at<cv::Vec2i>(cy,cx)[0],closest.at<cv::Vec2i>(cy,cx)[1]);
+        if (newdist < distances.at<float>(y,x)  )
         {
-            image(y,x)[0] = image(cy,cx)[0];
-            image(y,x)[1] = image(cy,cx)[1];
-            image(y,x)[2] = image(cy,cx)[2];
-            image(y,x)[3] = image(cy,cx)[3];
+            image.at<cv::Vec4b>(y,x)[0] = image.at<cv::Vec4b>(cy,cx)[0];
+            image.at<cv::Vec4b>(y,x)[1] = image.at<cv::Vec4b>(cy,cx)[1];
+            image.at<cv::Vec4b>(y,x)[2] = image.at<cv::Vec4b>(cy,cx)[2];
+            image.at<cv::Vec4b>(y,x)[3] = image.at<cv::Vec4b>(cy,cx)[3];
 
-            closest(y,x)[0] = closest(cy,cx)[0]; 
-            closest(y,x)[1] = closest(cy,cx)[1];
-            distances(y,x) = newdist;
+            closest.at<cv::Vec2i>(y,x)[0] = closest.at<cv::Vec2i>(cy,cx)[0]; 
+            closest.at<cv::Vec2i>(y,x)[1] = closest.at<cv::Vec2i>(cy,cx)[1];
+            distances.at<float>(y,x) = newdist;
         }
     };
 
@@ -108,7 +109,7 @@ int main(int argc, char** argv )
                 // 3 channels
                 for( int chan = 0; chan < 3; chan++)
                 {
-                    float truerad = distances(y,x) * 0.92 * shrink_factor;
+                    float truerad = distances.at<float>(y,x) * 0.92 * shrink_factor;
                     float newvalue = 0;
                     float count = 0;
                     // look around
@@ -118,12 +119,12 @@ int main(int argc, char** argv )
                         int cx = int( x + DIFF_UNIT_VECS[kappa][1]*truerad );
                         if (cy >= 0 && cy < image.rows && cx >= 0 && cx < image.cols)
                         {
-                            newvalue += float(image(cy,cx)[chan]);
+                            newvalue += float(image.at<cv::Vec4b>(cy,cx)[chan]);
                             count++;
                         }
                     }
                     newvalue = newvalue/count;
-                    image(y,x)[chan] = int(newvalue);
+                    image.at<cv::Vec4b>(y,x)[chan] = int(newvalue);
                 }
             }
         }
@@ -150,7 +151,7 @@ int main(int argc, char** argv )
     //             // 3 channels
     //             for( int chan = 0; chan < 3; chan++)
     //             {
-    //                 float truerad = distances(y,x) * 0.92;
+    //                 float truerad = _distances(y,x) * 0.92;
     //                 float newvalue = 0;
     //                 float count = 0;
     //                 // look around
@@ -165,7 +166,7 @@ int main(int argc, char** argv )
     //                     }
     //                 }
     //                 newvalue = newvalue/count;
-    //                 image(y,x)[chan] = int(newvalue);
+    //                 _image(y,x)[chan] = int(newvalue);
     //             }
     //         }
     //     }
@@ -182,37 +183,38 @@ int main(int argc, char** argv )
     {
         for( int x = 0; x < image.cols; x++ )
         {
-            if (image(y,x)[3] != 0)
+            if (image.at<cv::Vec4b>(y,x)[3] != 0)
             {
-                closest(y,x)[0] = y;
-                closest(y,x)[1] = x;
-                distances(y,x) = 0;
+                closest.at<cv::Vec2i>(y,x)[0] = y;
+                closest.at<cv::Vec2i>(y,x)[1] = x;
+                distances.at<float>(y,x) = 0;
 
             }
             else
             {
-                distances(y,x) = BIG_FLOAT;
-                closest(y,x)[0] = -1;
-                closest(y,x)[1] = -1;
+                closest.at<cv::Vec2i>(y,x)[0] = -1;
+                closest.at<cv::Vec2i>(y,x)[1] = -1;
+                distances.at<float>(y,x) = BIG_FLOAT;
             }
 
         }
     }
 
+    // DISTANCE MAP SWEEPS
     // RIGHT SWEEP
     for( int x = 1; x < image.cols; x++)
     {
         // edge
         int y = 0;
-        for( int k = 1; k < 3; k++) update_pixel(y,x,TEMPL_RIGHT,k);
+        for( int k = 1; k < 3; k++) distmap_update_pixel(y,x,TEMPL_RIGHT,k);
         // bulk
         for( int y = 1; y < image.rows -1; y++ )
         {
-            for( int k = 0; k < 3; k++) update_pixel(y,x,TEMPL_RIGHT,k);
+            for( int k = 0; k < 3; k++) distmap_update_pixel(y,x,TEMPL_RIGHT,k);
         }
         // edge
         y = image.cols-1;
-        for( int k = 0; k < 2; k++) update_pixel(y,x,TEMPL_RIGHT,k);
+        for( int k = 0; k < 2; k++) distmap_update_pixel(y,x,TEMPL_RIGHT,k);
     }
 
     // LEFT SWEEP
@@ -220,15 +222,15 @@ int main(int argc, char** argv )
     {
         // edge
         int y = 0;
-        for( int k = 1; k < 3; k++) update_pixel(y,x,TEMPL_LEFT,k);
+        for( int k = 1; k < 3; k++) distmap_update_pixel(y,x,TEMPL_LEFT,k);
         // bulk
         for( int y = 1; y < image.rows -1; y++ )
         {
-            for( int k = 0; k < 3; k++) update_pixel(y,x,TEMPL_LEFT,k);
+            for( int k = 0; k < 3; k++) distmap_update_pixel(y,x,TEMPL_LEFT,k);
         }
         // edge
         y = image.cols-1;
-        for( int k = 0; k < 2; k++) update_pixel(y,x,TEMPL_LEFT,k);
+        for( int k = 0; k < 2; k++) distmap_update_pixel(y,x,TEMPL_LEFT,k);
     }
 
     // DOWN SWEEP
@@ -236,15 +238,15 @@ int main(int argc, char** argv )
     {
         // left edge
         int x = 0;
-        for( int k = 1; k < 3; k++) update_pixel(y,x,TEMPL_DOWN,k);
+        for( int k = 1; k < 3; k++) distmap_update_pixel(y,x,TEMPL_DOWN,k);
         // bulk
         for( int x = 1; x < image.cols -1; x++ )
         {
-            for( int k = 0; k < 3; k++) update_pixel(y,x,TEMPL_DOWN,k);
+            for( int k = 0; k < 3; k++) distmap_update_pixel(y,x,TEMPL_DOWN,k);
         }
         // right edge
         x = image.cols-1;
-        for( int k = 0; k < 2; k++) update_pixel(y,x,TEMPL_DOWN,k);
+        for( int k = 0; k < 2; k++) distmap_update_pixel(y,x,TEMPL_DOWN,k);
     }
 
     // UP SWEEP
@@ -252,15 +254,15 @@ int main(int argc, char** argv )
     {
         // left edge
         int x = 0;
-        for( int k = 1; k < 3; k++) update_pixel(y,x,TEMPL_UP,k);
+        for( int k = 1; k < 3; k++) distmap_update_pixel(y,x,TEMPL_UP,k);
         // bulk
         for( int x = 1; x < image.cols -1; x++ )
         {
-            for( int k = 0; k < 3; k++) update_pixel(y,x,TEMPL_UP,k);
+            for( int k = 0; k < 3; k++) distmap_update_pixel(y,x,TEMPL_UP,k);
         }
         // right edge
         x = image.cols-1;
-        for( int k = 0; k < 2; k++) update_pixel(y,x,TEMPL_UP,k);
+        for( int k = 0; k < 2; k++) distmap_update_pixel(y,x,TEMPL_UP,k);
     }
 
     // DIFFUSION STEPS
@@ -272,6 +274,20 @@ int main(int argc, char** argv )
     for (   ; step <= n_steps_before + n_steps_shrinking; step++) 
         diffuse( (1- step/float(n_steps_shrinking)) );
     
+
+
+
+
+
+
+
+
+
+
+
+    
+
+ 
 
 
 
