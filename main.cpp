@@ -2,10 +2,12 @@
 #include <opencv2/opencv.hpp>
 #include <cmath>
 
+using namespace std;
+
 static const float BIG_FLOAT = std::numeric_limits<float>::max(); 
 static const uchar BIG_INT = std::numeric_limits<uchar>::max(); 
 inline float DISTANCE(float x1, float y1, float x2, float y2) {
-    if (x2 == -1 && y2 == -1)
+    if (x2 == -1 || y2 == -1)
     {
         // std::cout << "meno uno" << std::endl;
         return BIG_FLOAT;
@@ -27,7 +29,11 @@ int main(int argc, char** argv )
         return -1;
     }
 
-    cv::Mat_<cv::Vec4b> image = cv::imread( argv[1], cv::IMREAD_UNCHANGED );
+    // cv::IMREAD_UNCHANGED
+    // CV_16FC(4)
+    cv::Mat rawimage = cv::imread( argv[1],  cv::IMREAD_UNCHANGED);
+    cv::Mat_<cv::Vec4b> image = rawimage;
+    
     int ncols = image.cols;
     int nrows = image.rows;
     if ( !image.data )
@@ -36,10 +42,9 @@ int main(int argc, char** argv )
         return -1;
     }
 
-    cv::Mat_<cv::Vec2i> closest = cv::Mat(ncols, nrows, CV_32SC(2));
-    cv::Mat_<float> distances = cv::Mat(ncols, nrows, CV_32F);
+    cv::Mat_<cv::Vec2i> closest = cv::Mat(nrows, ncols, CV_32SC(2));
+    cv::Mat_<float> distances = cv::Mat(nrows, ncols, CV_32F);
     
-    // cv::Mat snapshot = image.clone();
 
 
     auto shuffled_rows = std::vector<int>(image.rows);
@@ -77,12 +82,13 @@ int main(int argc, char** argv )
     ///////////////// 
 
 
-    auto update_pixel = [&](int y, int x, const int TEMPL[3][2], int k)
+    auto distmap_update_pixel = [&](int y, int x, const int TEMPL[2])
     {
-        int cy = y + TEMPL[k][0];
-        int cx = x + TEMPL[k][1];
+        int cy = y + TEMPL[0];
+        int cx = x + TEMPL[1];
         float newdist = DISTANCE(y,x,closest(cy,cx)[0],closest(cy,cx)[1]);
-        if (newdist < distances(y,x)  )
+
+        if (newdist < distances(y,x) )
         {
             image(y,x)[0] = image(cy,cx)[0];
             image(y,x)[1] = image(cy,cx)[1];
@@ -92,23 +98,25 @@ int main(int argc, char** argv )
             closest(y,x)[0] = closest(cy,cx)[0]; 
             closest(y,x)[1] = closest(cy,cx)[1];
             distances(y,x) = newdist;
-        }
+        }   
     };
 
     
-    // in-place
-    auto diffuse = [&](float shrink_factor = 1)
+    // in-place diffuse
+    auto diffuse = [&](float shrink_factor = 1, float radius_override = -1)
     {
         for( int linear_x = 0; linear_x < image.cols; linear_x++)
         {
             int x = shuffled_cols[linear_x];
             for( int linear_y = 0; linear_y < image.rows; linear_y++ )
             {
-                int y = shuffled_cols[linear_y];
+                int y = shuffled_rows[linear_y];
                 // 3 channels
                 for( int chan = 0; chan < 3; chan++)
                 {
-                    float truerad = distances(y,x) * 0.92 * shrink_factor;
+                    float truerad;
+                    if (radius_override != -1) truerad = radius_override;
+                    else truerad = distances(y,x) * 0.92 * shrink_factor;
                     float newvalue = 0;
                     float count = 0;
                     // look around
@@ -133,7 +141,6 @@ int main(int argc, char** argv )
     // auto take_snapshot = [&](){
     //     snapshot = image.clone();
     //     cv::Mat_<cv::Vec4b> _snapshot = snapshot;
-    //     // std::cout << "printerino" << std::endl;
     //     // cv::namedWindow("Display nug", cv::WINDOW_AUTOSIZE );
     //     // cv::imshow("Display nug", snapshot);
     //     // std::cout << "printerino2" << std::endl;
@@ -177,17 +184,41 @@ int main(int argc, char** argv )
     // MAIN
     ///////////////// 
 
-    // init 
+    // init
+    // find max alpha
+    float max_alpha = 0;;
+    int tempcols = image.cols;
+    int temprows = image.rows;
+    if (image.isContinuous())
+    {
+        tempcols *= temprows;
+        temprows = 1;
+    }
+    uchar* p;
+    for(int i = 0; i < temprows; ++i)
+    {
+        p = image.ptr<uchar>(i);
+        for (int j = 0; j < tempcols; ++j)
+        {
+            // if (float(p[j*4 + 3]) == 255.) { max_alpha = 255.; break; }
+            if (float(p[j*4 + 3]) > max_alpha) { max_alpha = float(p[j*4 + 3]); }
+        }
+    }
+    std::cout <<setprecision(10)<< "max alpha " << max_alpha << "\n";
+
+    // initialize pixels as either boundary (fixed) or to-be-painted-over
     for( int y = 0; y < image.rows; y++)
     {
         for( int x = 0; x < image.cols; x++ )
         {
-            if (image(y,x)[3] != 0)
+            // std::cout << float(image(y,x)[3]) << " ";
+            if ( float(image(y,x)[3]) >= max_alpha )
             {
+                // image(y,x)[3] = max_alpha;
+                // normal init
                 closest(y,x)[0] = y;
                 closest(y,x)[1] = x;
                 distances(y,x) = 0;
-
             }
             else
             {
@@ -195,7 +226,6 @@ int main(int argc, char** argv )
                 closest(y,x)[0] = -1;
                 closest(y,x)[1] = -1;
             }
-
         }
     }
 
@@ -203,32 +233,34 @@ int main(int argc, char** argv )
     for( int x = 1; x < image.cols; x++)
     {
         // edge
-        int y = 0;
-        for( int k = 1; k < 3; k++) update_pixel(y,x,TEMPL_RIGHT,k);
+        int edgey1 = 0;
+        for( int k = 1; k < 3; k++) distmap_update_pixel(edgey1,x,TEMPL_RIGHT[k]);
+
         // bulk
-        for( int y = 1; y < image.rows -1; y++ )
+        for( int y = 1; y <= image.rows-2; y++ )
         {
-            for( int k = 0; k < 3; k++) update_pixel(y,x,TEMPL_RIGHT,k);
+            for( int k = 0; k < 3; k++) distmap_update_pixel(y,x,TEMPL_RIGHT[k]);
         }
         // edge
-        y = image.cols-1;
-        for( int k = 0; k < 2; k++) update_pixel(y,x,TEMPL_RIGHT,k);
+        int edgey2 = image.rows-1;
+        for( int k = 0; k < 2; k++) distmap_update_pixel(edgey2,x,TEMPL_RIGHT[k]);
     }
 
+
     // LEFT SWEEP
-    for( int x = image.cols-1; x >= 1; x--)
+    for( int x = image.cols-2; x >= 0; x--)
     {
         // edge
-        int y = 0;
-        for( int k = 1; k < 3; k++) update_pixel(y,x,TEMPL_LEFT,k);
+        int edgey1 = 0;
+        for( int k = 1; k < 3; k++) distmap_update_pixel(edgey1,x,TEMPL_LEFT[k]);
         // bulk
-        for( int y = 1; y < image.rows -1; y++ )
+        for( int y = 1; y <= image.rows-2; y++ )
         {
-            for( int k = 0; k < 3; k++) update_pixel(y,x,TEMPL_LEFT,k);
+            for( int k = 0; k < 3; k++) distmap_update_pixel(y,x,TEMPL_LEFT[k]);
         }
         // edge
-        y = image.cols-1;
-        for( int k = 0; k < 2; k++) update_pixel(y,x,TEMPL_LEFT,k);
+        int edgey2 = image.rows-1;
+        for( int k = 0; k < 2; k++) distmap_update_pixel(edgey2,x,TEMPL_LEFT[k]);
     }
 
     // DOWN SWEEP
@@ -236,43 +268,57 @@ int main(int argc, char** argv )
     {
         // left edge
         int x = 0;
-        for( int k = 1; k < 3; k++) update_pixel(y,x,TEMPL_DOWN,k);
+        for( int k = 1; k < 3; k++) distmap_update_pixel(y,x,TEMPL_DOWN[k]);
         // bulk
-        for( int x = 1; x < image.cols -1; x++ )
+        for( int x = 1; x <= image.cols-2; x++ )
         {
-            for( int k = 0; k < 3; k++) update_pixel(y,x,TEMPL_DOWN,k);
+            for( int k = 0; k < 3; k++) distmap_update_pixel(y,x,TEMPL_DOWN[k]);
         }
         // right edge
         x = image.cols-1;
-        for( int k = 0; k < 2; k++) update_pixel(y,x,TEMPL_DOWN,k);
+        for( int k = 0; k < 2; k++) distmap_update_pixel(y,x,TEMPL_DOWN[k]);
     }
 
     // UP SWEEP
-    for( int y = image.rows-1; y >= 1; y--)
+    for( int y = image.rows-2; y >= 0; y--)
     {
         // left edge
         int x = 0;
-        for( int k = 1; k < 3; k++) update_pixel(y,x,TEMPL_UP,k);
+        for( int k = 1; k < 3; k++) distmap_update_pixel(y,x,TEMPL_UP[k]);
         // bulk
-        for( int x = 1; x < image.cols -1; x++ )
+        for( int x = 1; x <= image.cols-2; x++ )
         {
-            for( int k = 0; k < 3; k++) update_pixel(y,x,TEMPL_UP,k);
+            for( int k = 0; k < 3; k++) distmap_update_pixel(y,x,TEMPL_UP[k]);
         }
         // right edge
         x = image.cols-1;
-        for( int k = 0; k < 2; k++) update_pixel(y,x,TEMPL_UP,k);
+        for( int k = 0; k < 2; k++) distmap_update_pixel(y,x,TEMPL_UP[k]);
     }
 
     // DIFFUSION STEPS
+
     int n_steps_before = 4;
-    int n_steps_shrinking = 4;
+    int n_steps_shrinking = 6;
+    int n_steps_after = 0;
+
+
     int step = 1;
     for (   ; step <= n_steps_before; step++)
         diffuse();
     for (   ; step <= n_steps_before + n_steps_shrinking; step++) 
         diffuse( (1- step/float(n_steps_shrinking)) );
+    for ( int j = step; j < step + n_steps_after; j++)
+        diffuse( (1- step/float(n_steps_shrinking)) );
+
+    // diffuse(3., 3.);
+    // diffuse(1., 1.);
     
 
+
+
+ 
+
+    // std::cerr     <<"rows "<< image.rows << ", cols "<<image.cols<<std::endl;
 
 
 
